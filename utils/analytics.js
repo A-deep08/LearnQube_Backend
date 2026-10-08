@@ -194,6 +194,48 @@ async function getWeakAreas(userId, days = 30, limit = 5) {
         .map((r) => ({ ...r, suggestion: `Revise "${r.chapter}" in ${r.subject} and retake the quiz` }));
 }
 
+async function rangeScore(userId, from, to) {
+    const [r] = await Activity.aggregate([
+        { $match: { user: toObjectId(userId), maxScore: { $gt: 0 }, createdAt: { $gte: from, $lt: to } } },
+        { $group: { _id: null, score: { $sum: '$score' }, maxScore: { $sum: '$maxScore' } } },
+    ]);
+    return r ? pct(r.score, r.maxScore) : null;
+}
+
+// Rule-based flags for parents: inactivity, week-over-week score drop, weak subjects
+async function getAlerts(userId) {
+    const alerts = [];
+
+    const last = await Activity.findOne({ user: toObjectId(userId) }).sort({ createdAt: -1 }).select('createdAt').lean();
+    if (!last) {
+        alerts.push({ type: 'no_activity', severity: 'high', message: 'No study activity recorded yet' });
+    } else {
+        const idle = Math.round((dayStart(dayKey(Date.now())) - dayStart(dayKey(last.createdAt))) / DAY_MS);
+        if (idle >= 3) {
+            alerts.push({ type: 'inactive', severity: idle >= 7 ? 'high' : 'medium', message: `No study activity for ${idle} days` });
+        }
+    }
+
+    const weekStart = sinceDays(7);
+    const prevStart = new Date(weekStart.getTime() - 7 * DAY_MS);
+    const [current, previous] = await Promise.all([
+        rangeScore(userId, weekStart, new Date(Date.now() + DAY_MS)),
+        rangeScore(userId, prevStart, weekStart),
+    ]);
+    if (current !== null && previous !== null && previous - current >= 10) {
+        alerts.push({ type: 'score_drop', severity: 'medium', message: `Average score fell from ${previous}% to ${current}% this week` });
+    }
+
+    const subjects = await getSubjectStats(userId, 30);
+    subjects
+        .filter((s) => s.averageScore !== null && s.averageScore < WEAK_THRESHOLD)
+        .forEach((s) =>
+            alerts.push({ type: 'low_subject', severity: 'medium', message: `Average in ${s.subject} is ${s.averageScore}% (last 30 days)` })
+        );
+
+    return alerts;
+}
+
 module.exports = {
     getStreak,
     getSummary,
@@ -201,5 +243,6 @@ module.exports = {
     getDailyReport,
     getTrends,
     getWeakAreas,
+    getAlerts,
     dayKey,
 };

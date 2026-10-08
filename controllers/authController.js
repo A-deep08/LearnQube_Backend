@@ -5,10 +5,14 @@ require('dotenv').config();
 
 const register = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'Name, email, and password are required' });
+    }
+
+    if (role !== undefined && !['student', 'parent'].includes(role)) {
+      return res.status(400).json({ error: 'role must be student or parent' });
     }
 
     const existingUser = await User.findOne({ email });
@@ -23,6 +27,7 @@ const register = async (req, res) => {
       name,
       email,
       password: hashedPassword,
+      role: role || 'student',
     });
 
     res.status(201).json({
@@ -31,6 +36,7 @@ const register = async (req, res) => {
         id: newUser._id,
         name: newUser.name,
         email: newUser.email,
+        role: newUser.role,
         createdAt: newUser.createdAt,
       },
     });
@@ -74,6 +80,7 @@ const login = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
+        role: user.role,
       },
     });
   } catch (error) {
